@@ -1,0 +1,5 @@
+# Requirements for Test Database Generator
+# Install with: pip install -r test_database_requirements.txt
+
+psycopg2-binary>=2.9.0
+Faker>=18.0.0

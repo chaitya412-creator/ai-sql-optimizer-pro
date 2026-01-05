@@ -1,0 +1,39 @@
+# FastAPI and ASGI server
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Database drivers
+psycopg2-binary==2.9.9
+PyMySQL==1.1.0
+oracledb==2.0.0
+pyodbc==5.0.1
+sqlalchemy==2.0.25
+
+# HTTP client for Ollama
+httpx==0.26.0
+requests==2.31.0
+
+# Security and encryption
+cryptography==41.0.7
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Background tasks and scheduling
+apscheduler==3.10.4
+
+# Utilities
+python-dotenv==1.0.0
+python-multipart==0.0.6
+
+# CORS (FastAPI has built-in CORS middleware, no separate package needed)
+
+# Logging
+loguru==0.7.2
+
+# JSON parsing
+orjson==3.9.12
+
+# Date/time utilities
+python-dateutil==2.8.2

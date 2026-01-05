@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sql-optimizer-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - BACKEND_HOST=0.0.0.0
+      - BACKEND_PORT=8000
+      - OLLAMA_BASE_URL=http://192.168.1.81:11434
+      - OLLAMA_MODEL=sqlcoder:latest
+      - OLLAMA_TIMEOUT=300
+      - DATABASE_URL=sqlite:///./app/db/observability.db
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+      - MONITORING_ENABLED=true
+      - MONITORING_INTERVAL_MINUTES=60
+      - MAX_QUERIES_PER_POLL=100
+      - ENABLE_DDL_EXECUTION=false
+      - DEBUG=true
+    volumes:
+      - ./backend:/app
+      - backend-data:/app/app/db
+    networks:
+      - sql-optimizer-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sql-optimizer-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - sql-optimizer-network
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend-data:
+    driver: local
+
+networks:
+  sql-optimizer-network:
+    driver: bridge
