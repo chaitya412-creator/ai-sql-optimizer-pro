@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # Ollama
     OLLAMA_BASE_URL: str = "http://192.168.1.81:11434"
     OLLAMA_MODEL: str = "sqlcoder:latest"
+    OLLAMA_CODE_GENERATION_MODEL: str = "olmo-3:latest"  # Model for generating corrected code
     OLLAMA_TIMEOUT: int = 300
     
     # Database - PostgreSQL (Production) or SQLite (Development)

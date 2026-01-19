@@ -14,6 +14,48 @@ const client = axios.create({
   timeout: 30000,
 });
 
+const normalizeColumns = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value
+      .filter((v) => v !== null && v !== undefined)
+      .map((v) => String(v).trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+
+    // Some backends/DBs return JSON-encoded arrays.
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed
+            .filter((v) => v !== null && v !== undefined)
+            .map((v) => String(v).trim())
+            .filter(Boolean);
+        }
+      } catch {
+        // fall through
+      }
+    }
+
+    // Fallback: comma-separated list.
+    return trimmed
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+};
+
+const normalizeIndexRecommendation = (rec: any): IndexRecommendation => ({
+  ...rec,
+  columns: normalizeColumns(rec?.columns),
+});
+
 export interface IndexRecommendation {
   id: number;
   connection_id: number;
@@ -76,7 +118,8 @@ export interface IndexAnalysisResponse {
 export const getIndexRecommendations = async (connectionId: number): Promise<IndexRecommendation[]> => {
   try {
     const response = await client.get(`/api/indexes/recommendations/${connectionId}`);
-    return response.data;
+    const data = Array.isArray(response.data) ? response.data : [];
+    return data.map(normalizeIndexRecommendation);
   } catch (error) {
     console.error('Error fetching index recommendations:', error);
     throw error;
@@ -164,7 +207,11 @@ export const getIndexHistory = async (
     const response = await client.get(`/api/indexes/history/${connectionId}`, {
       params: { limit }
     });
-    return response.data;
+    const data = response.data;
+    if (data && Array.isArray(data.changes)) {
+      data.changes = data.changes.map(normalizeIndexRecommendation);
+    }
+    return data;
   } catch (error) {
     console.error('Error fetching index history:', error);
     throw error;

@@ -76,7 +76,9 @@ export const getAllPatterns = async (filters?: PatternFilters): Promise<Pattern[
     if (filters?.limit) params.append('limit', filters.limit.toString());
     if (filters?.offset) params.append('offset', filters.offset.toString());
     
-    const response = await client.get(`/api/patterns?${params.toString()}`);
+    const queryString = params.toString();
+    const url = queryString ? `/api/patterns/?${queryString}` : '/api/patterns/';
+    const response = await client.get(url);
     return response.data;
   } catch (error) {
     console.error('Error fetching patterns:', error);

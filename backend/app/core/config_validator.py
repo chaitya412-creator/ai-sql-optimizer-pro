@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 import logging
+import re
 import time
 
 from app.models.database import (
@@ -13,7 +14,6 @@ from app.models.database import (
     ConfigurationChange,
     WorkloadMetrics
 )
-from app.core.db_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,6 @@ class ConfigValidator:
     
     def __init__(self, db: Session):
         self.db = db
-        self.db_manager = DatabaseManager()
         
         # Safety thresholds
         self.max_performance_degradation = 20  # Max 20% performance loss
@@ -83,11 +82,25 @@ class ConfigValidator:
         try:
             # Validate shared_buffers
             if parameter == 'shared_buffers':
+                # Accept relative recommendations used by the optimizer rules
+                # (e.g. "25% of RAM"). The system currently records changes
+                # rather than executing them against the DB, so allow this
+                # format to be applied from the UI.
+                percent_match = re.match(r"^\s*(\d{1,3})\s*%\s+of\s+ram\s*$", value, re.IGNORECASE)
+                if percent_match:
+                    percent = int(percent_match.group(1))
+                    if percent <= 0 or percent > 95:
+                        return False, "shared_buffers percentage must be between 1 and 95"
+                    return True, "Valid shared_buffers relative value"
+
                 if not value.endswith(('MB', 'GB')):
                     return False, "shared_buffers must end with MB or GB"
                 
                 # Extract numeric value
-                numeric = int(value[:-2])
+                try:
+                    numeric = int(value[:-2])
+                except ValueError:
+                    return False, "shared_buffers must start with an integer size"
                 unit = value[-2:]
                 
                 if unit == 'GB':
@@ -533,7 +546,7 @@ class ConfigValidator:
                 'message': f'Error: {str(e)}'
             }
     
-    def get_safety_checks(self, parameter: str, value: str, db_type: str) -> List[str]:
+def get_safety_checks(self, parameter: str, value: str, db_type: str) -> List[str]:
         """
         Get list of safety checks for a configuration change
         

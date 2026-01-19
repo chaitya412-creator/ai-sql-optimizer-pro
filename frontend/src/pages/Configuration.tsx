@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Settings, AlertCircle, RefreshCw, Database, Activity } from 'lucide-react';
 import { getConnections } from '../services/api';
 import configurationService, {
@@ -19,17 +19,30 @@ export default function Configuration() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const selectedConnectionRef = useRef<number | null>(null);
+
   // Load connections on mount
   useEffect(() => {
     loadConnections();
   }, []);
 
-  // Load data when connection is selected
+  // Update ref and load data when connection is selected
   useEffect(() => {
+    selectedConnectionRef.current = selectedConnection;
+    
     if (selectedConnection) {
+      // Clear previous data immediately to avoid confusion
+      setRecommendations([]);
+      setHistory([]);
+      setWorkload(null);
+      
       loadRecommendations();
       loadHistory();
       loadWorkloadAnalysis();
+    } else {
+      setRecommendations([]);
+      setHistory([]);
+      setWorkload(null);
     }
   }, [selectedConnection]);
 
@@ -46,37 +59,51 @@ export default function Configuration() {
   };
 
   const loadRecommendations = async () => {
-    if (!selectedConnection) return;
+    const currentId = selectedConnectionRef.current;
+    if (!currentId) return;
     
     setLoading(true);
     setError(null);
     try {
-      const data = await configurationService.getRecommendations(selectedConnection);
-      setRecommendations(data);
+      const data = await configurationService.getRecommendations(currentId);
+      // Only update if the connection is still the same
+      if (selectedConnectionRef.current === currentId) {
+        setRecommendations(data);
+      }
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to load recommendations');
+      if (selectedConnectionRef.current === currentId) {
+        setError(err.response?.data?.detail || 'Failed to load recommendations');
+      }
     } finally {
-      setLoading(false);
+      if (selectedConnectionRef.current === currentId) {
+        setLoading(false);
+      }
     }
   };
 
   const loadHistory = async () => {
-    if (!selectedConnection) return;
+    const currentId = selectedConnectionRef.current;
+    if (!currentId) return;
     
     try {
-      const data = await configurationService.getChangeHistory(selectedConnection);
-      setHistory(data);
+      const data = await configurationService.getChangeHistory(currentId);
+      if (selectedConnectionRef.current === currentId) {
+        setHistory(data);
+      }
     } catch (err: any) {
       console.error('Failed to load history:', err);
     }
   };
 
   const loadWorkloadAnalysis = async () => {
-    if (!selectedConnection) return;
+    const currentId = selectedConnectionRef.current;
+    if (!currentId) return;
     
     try {
-      const data = await configurationService.getWorkloadAnalysis(selectedConnection);
-      setWorkload(data);
+      const data = await configurationService.getWorkloadAnalysis(currentId);
+      if (selectedConnectionRef.current === currentId) {
+        setWorkload(data);
+      }
     } catch (err: any) {
       console.error('Failed to load workload analysis:', err);
     }
@@ -84,7 +111,7 @@ export default function Configuration() {
 
   const handleApplyConfig = async (parameter: string, value: string) => {
     if (!selectedConnection) return;
-
+    setLoading(true);
     try {
       await configurationService.applyChange({
         connection_id: selectedConnection,
@@ -96,7 +123,10 @@ export default function Configuration() {
       await loadRecommendations();
       await loadHistory();
     } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to apply configuration');
       throw new Error(err.response?.data?.detail || 'Failed to apply configuration');
+    } finally {
+      setLoading(false);
     }
   };
 

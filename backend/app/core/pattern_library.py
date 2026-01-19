@@ -2,8 +2,9 @@
 Pattern Library Module
 Enhanced pattern management and browsing system
 """
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime
+import inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 from loguru import logger
@@ -28,6 +29,12 @@ class PatternLibrary:
     
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def _maybe_await(self, value: Any) -> Any:
+        """Allow this library to work with both sync Session and AsyncSession."""
+        if inspect.isawaitable(value):
+            return await value
+        return value
     
     async def get_all_patterns(
         self,
@@ -96,7 +103,7 @@ class PatternLibrary:
             query = query.limit(limit).offset(offset)
             
             # Execute query
-            result = await self.db.execute(query)
+            result = await self._maybe_await(self.db.execute(query))
             patterns = result.scalars().all()
             
             # Convert to dictionaries with category
@@ -118,6 +125,10 @@ class PatternLibrary:
                     'updated_at': pattern.updated_at.isoformat()
                 }
                 pattern_list.append(pattern_dict)
+
+            # Category filter is derived (not a DB column), so filter post-fetch.
+            if category:
+                pattern_list = [p for p in pattern_list if p.get('category') == category]
             
             logger.info(f"Retrieved {len(pattern_list)} patterns")
             return pattern_list
@@ -137,7 +148,7 @@ class PatternLibrary:
             Pattern dictionary or None
         """
         try:
-            pattern = await self.db.get(OptimizationPattern, pattern_id)
+            pattern = await self._maybe_await(self.db.get(OptimizationPattern, pattern_id))
             
             if not pattern:
                 logger.warning(f"Pattern {pattern_id} not found")
@@ -202,12 +213,12 @@ class PatternLibrary:
                 conditions.append(OptimizationPattern.database_type == database_type)
             
             # Execute search
-            result = await self.db.execute(
+            result = await self._maybe_await(self.db.execute(
                 select(OptimizationPattern)
                 .where(and_(*conditions))
                 .order_by(OptimizationPattern.success_rate.desc())
                 .limit(limit)
-            )
+            ))
             patterns = result.scalars().all()
             
             # Filter by category if specified
@@ -283,7 +294,7 @@ class PatternLibrary:
         """
         try:
             # Get all patterns
-            result = await self.db.execute(select(OptimizationPattern))
+            result = await self._maybe_await(self.db.execute(select(OptimizationPattern)))
             patterns = result.scalars().all()
             
             # Count by category
@@ -333,28 +344,28 @@ class PatternLibrary:
         """
         try:
             # Count total patterns
-            total_result = await self.db.execute(
+            total_result = await self._maybe_await(self.db.execute(
                 select(func.count(OptimizationPattern.id))
-            )
+            ))
             total_patterns = total_result.scalar()
             
             # Count by database type
-            db_result = await self.db.execute(
+            db_result = await self._maybe_await(self.db.execute(
                 select(
                     OptimizationPattern.database_type,
                     func.count(OptimizationPattern.id)
                 ).group_by(OptimizationPattern.database_type)
-            )
+            ))
             by_database = {row[0]: row[1] for row in db_result.all()}
             
             # Calculate averages
-            avg_result = await self.db.execute(
+            avg_result = await self._maybe_await(self.db.execute(
                 select(
                     func.avg(OptimizationPattern.success_rate),
                     func.sum(OptimizationPattern.times_applied),
                     func.sum(OptimizationPattern.times_successful)
                 )
-            )
+            ))
             avg_row = avg_result.first()
             
             avg_success_rate = avg_row[0] if avg_row[0] else 0
@@ -362,7 +373,7 @@ class PatternLibrary:
             total_successful = avg_row[2] if avg_row[2] else 0
             
             # Get category counts
-            all_patterns = await self.db.execute(select(OptimizationPattern))
+            all_patterns = await self._maybe_await(self.db.execute(select(OptimizationPattern)))
             patterns = all_patterns.scalars().all()
             
             by_category = {}
@@ -420,7 +431,7 @@ class PatternLibrary:
                 OptimizationPattern.avg_improvement_pct.desc()
             ).limit(limit)
             
-            result = await self.db.execute(query)
+            result = await self._maybe_await(self.db.execute(query))
             patterns = result.scalars().all()
             
             return [
@@ -508,14 +519,14 @@ class PatternLibrary:
             
             for pattern_data in common_patterns:
                 # Check if pattern already exists
-                result = await self.db.execute(
+                result = await self._maybe_await(self.db.execute(
                     select(OptimizationPattern).where(
                         and_(
                             OptimizationPattern.pattern_signature == pattern_data['signature'],
                             OptimizationPattern.database_type == pattern_data['database_type']
                         )
                     )
-                )
+                ))
                 existing = result.scalar_one_or_none()
                 
                 if not existing:
@@ -535,12 +546,16 @@ class PatternLibrary:
                     self.db.add(pattern)
                     loaded_count += 1
             
-            await self.db.commit()
+            await self._maybe_await(self.db.commit())
             logger.info(f"Loaded {loaded_count} common patterns")
             return loaded_count
             
         except Exception as e:
-            await self.db.rollback()
+            # Rollback for both sync/async sessions
+            try:
+                await self._maybe_await(self.db.rollback())
+            except Exception:
+                pass
             logger.error(f"Error loading common patterns: {e}")
             return 0
     

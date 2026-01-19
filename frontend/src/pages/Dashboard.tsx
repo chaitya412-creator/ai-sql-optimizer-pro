@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, Database, Zap, Clock, AlertTriangle, XCircle, Info, Shield, ArrowRight, Filter } from 'lucide-react';
+import { TrendingUp, Database, Zap, Clock, AlertTriangle, XCircle, Info, Shield, ArrowRight, Filter } from 'lucide-react';
 import { getDashboardStats, getTopQueries, getPerformanceTrends, getDetectionSummary, getQueriesWithIssues, getConnections } from '../services/api';
 import type { DashboardStats, TopQuery, PerformanceTrend, DetectionSummary, QueryWithIssues, Connection } from '../types';
 import { Link } from 'react-router-dom';
+import PerformanceTrendsChart from '../components/Dashboard/PerformanceTrendsChart';
 
 export default function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -703,8 +704,8 @@ export default function Dashboard() {
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
             Performance Trends (24h)
           </h2>
-          <div className="h-64 flex items-center justify-center text-gray-500 dark:text-gray-400">
-            <p>Chart visualization would go here (using recharts)</p>
+          <div className="h-64">
+            <PerformanceTrendsChart data={trends} height={256} />
           </div>
         </div>
       )}

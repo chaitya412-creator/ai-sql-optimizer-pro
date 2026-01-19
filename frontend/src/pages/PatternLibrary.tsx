@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Filter, RefreshCw, Database, TrendingUp, CheckCircle, BookOpen, X } from 'lucide-react';
 import PatternCard from '../components/Patterns/PatternCard';
+import { getConnections } from '../services/api';
+import type { Connection } from '../types';
 import {
   getAllPatterns,
   getCategories,
@@ -19,10 +21,15 @@ const PatternLibrary: React.FC = () => {
   const [statistics, setStatistics] = useState<PatternStatistics | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<number | null>(null);
   
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedDatabase, setSelectedDatabase] = useState<string>('');
+  const selectedDatabase = useMemo(() => {
+    const found = connections.find((c) => c.id === selectedConnectionId);
+    return found?.engine?.toLowerCase() || '';
+  }, [connections, selectedConnectionId]);
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [minSuccessRate, setMinSuccessRate] = useState<number>(0);
   const [sortBy, setSortBy] = useState<string>('success_rate');
@@ -34,6 +41,7 @@ const PatternLibrary: React.FC = () => {
   // Load initial data
   useEffect(() => {
     loadInitialData();
+    loadConnections();
   }, []);
 
   // Load data when filters change
@@ -44,6 +52,18 @@ const PatternLibrary: React.FC = () => {
       loadPatterns();
     }
   }, [selectedDatabase, selectedCategory, minSuccessRate, sortBy]);
+
+  const loadConnections = async () => {
+    try {
+      const data = await getConnections();
+      setConnections(data);
+      if (data.length > 0 && !selectedConnectionId) {
+        setSelectedConnectionId(data[0].id);
+      }
+    } catch (err: any) {
+      console.error('Failed to load connections', err);
+    }
+  };
 
   const loadInitialData = async () => {
     setLoading(true);
@@ -222,18 +242,20 @@ const PatternLibrary: React.FC = () => {
               </div>
             </div>
 
-            {/* Database Filter */}
+            {/* Connection Filter (drives database type) */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Database</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Connection</label>
               <select
-                value={selectedDatabase}
-                onChange={(e) => setSelectedDatabase(e.target.value)}
+                value={selectedConnectionId ?? ''}
+                onChange={(e) => setSelectedConnectionId(e.target.value ? Number(e.target.value) : null)}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
-                <option value="">All Databases</option>
-                <option value="postgresql">PostgreSQL</option>
-                <option value="mysql">MySQL</option>
-                <option value="mssql">MSSQL</option>
+                <option value="">All Connected Databases</option>
+                {connections.map((conn) => (
+                  <option key={conn.id} value={conn.id}>
+                    {conn.name} ({conn.engine})
+                  </option>
+                ))}
               </select>
             </div>
 

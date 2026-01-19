@@ -606,6 +606,8 @@ class PatternResponse(BaseModel):
     times_applied: int
     times_successful: int
     database_type: str
+    category: Optional[str] = None
+    description: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     
@@ -674,11 +676,14 @@ class WorkloadAnalysis(BaseModel):
     connection_id: int
     workload_type: str  # 'oltp', 'olap', 'mixed'
     peak_hours: List[int] = []
-    avg_queries_per_hour: float
+    avg_query_rate: float
     avg_execution_time: float
+    total_queries: int = 0
+    slow_queries_count: int = 0
     slow_query_percentage: float
     recommendations: List[ConfigRecommendation] = []
     analysis_period_days: int = 7
+    insights: List[str] = []
     analyzed_at: datetime
 
 

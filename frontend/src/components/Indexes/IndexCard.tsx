@@ -14,6 +14,17 @@ const IndexCard: React.FC<IndexCardProps> = ({ recommendation, onApply, onReject
   const [action, setAction] = useState<'apply' | 'reject' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const columns = Array.isArray(recommendation.columns) ? recommendation.columns : [];
+  const estimatedBenefit = typeof recommendation.estimated_benefit === 'number'
+    ? recommendation.estimated_benefit
+    : undefined;
+  const sizeBytes = typeof recommendation.size_bytes === 'number'
+    ? recommendation.size_bytes
+    : undefined;
+  const scans = typeof recommendation.scans === 'number'
+    ? recommendation.scans
+    : 0;
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'recommended':
@@ -51,8 +62,8 @@ const IndexCard: React.FC<IndexCardProps> = ({ recommendation, onApply, onReject
         await createIndex({
           connection_id: recommendation.connection_id,
           table_name: recommendation.table_name,
-          index_name: recommendation.index_name || `idx_${recommendation.table_name}_${recommendation.columns.join('_')}`,
-          columns: recommendation.columns,
+          index_name: recommendation.index_name || `idx_${recommendation.table_name}_${columns.join('_')}`,
+          columns,
           index_type: recommendation.index_type,
           schema_name: recommendation.schema_name,
         });
@@ -132,7 +143,7 @@ const IndexCard: React.FC<IndexCardProps> = ({ recommendation, onApply, onReject
         <div className="mb-4">
           <p className="text-sm text-gray-600 mb-2">Columns:</p>
           <div className="flex flex-wrap gap-2">
-            {recommendation.columns.map((col, idx) => (
+            {columns.map((col, idx) => (
               <span
                 key={idx}
                 className="px-3 py-1 bg-gray-100 text-gray-700 rounded-md text-sm font-mono"
@@ -160,22 +171,22 @@ const IndexCard: React.FC<IndexCardProps> = ({ recommendation, onApply, onReject
 
         {/* Metrics */}
         <div className="grid grid-cols-3 gap-4 mb-4">
-          {recommendation.estimated_benefit !== undefined && (
+          {estimatedBenefit !== undefined && (
             <div className="text-center p-3 bg-green-50 rounded-lg">
               <TrendingUp className="w-5 h-5 text-green-600 mx-auto mb-1" />
               <p className="text-xs text-gray-600">Benefit</p>
               <p className="text-lg font-semibold text-green-600">
-                {recommendation.estimated_benefit.toFixed(1)}%
+                {estimatedBenefit.toFixed(1)}%
               </p>
             </div>
           )}
           
-          {recommendation.size_bytes !== undefined && (
+          {sizeBytes !== undefined && (
             <div className="text-center p-3 bg-blue-50 rounded-lg">
               <HardDrive className="w-5 h-5 text-blue-600 mx-auto mb-1" />
               <p className="text-xs text-gray-600">Size</p>
               <p className="text-sm font-semibold text-blue-600">
-                {formatBytes(recommendation.size_bytes)}
+                {formatBytes(sizeBytes)}
               </p>
             </div>
           )}
@@ -184,7 +195,7 @@ const IndexCard: React.FC<IndexCardProps> = ({ recommendation, onApply, onReject
             <Activity className="w-5 h-5 text-purple-600 mx-auto mb-1" />
             <p className="text-xs text-gray-600">Scans</p>
             <p className="text-lg font-semibold text-purple-600">
-              {recommendation.scans}
+              {scans}
             </p>
           </div>
         </div>

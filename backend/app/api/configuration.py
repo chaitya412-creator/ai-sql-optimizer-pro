@@ -22,7 +22,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/config", tags=["configuration"])
+router = APIRouter()
 
 
 @router.get("/recommendations/{connection_id}", response_model=List[ConfigRecommendation])
@@ -381,12 +381,18 @@ async def get_workload_analysis(
             pattern
         )
         
+        # Calculate average execution time from hourly patterns
+        hourly_avgs = pattern.get('hourly_pattern', {}).get('hourly_averages', {}).values()
+        avg_exec_time = sum(h.get('exec_time', 0) for h in hourly_avgs) / len(hourly_avgs) if hourly_avgs else 0
+        
         return WorkloadAnalysis(
             connection_id=connection_id,
             workload_type=pattern.get('workload_type', 'unknown'),
             peak_hours=pattern.get('hourly_pattern', {}).get('peak_hours', []),
-            avg_queries_per_hour=pattern.get('query_pattern', {}).get('total_calls', 0) / (days * 24),
-            avg_execution_time=pattern.get('resource_pattern', {}).get('cpu', {}).get('avg', 0),
+            avg_query_rate=pattern.get('query_pattern', {}).get('total_calls', 0) / (days * 24),
+            avg_execution_time=avg_exec_time,
+            total_queries=pattern.get('query_pattern', {}).get('total_queries', 0),
+            slow_queries_count=pattern.get('query_pattern', {}).get('slow_queries_count', 0),
             slow_query_percentage=pattern.get('query_pattern', {}).get('slow_queries_pct', 0),
             recommendations=[
                 ConfigRecommendation(
@@ -402,6 +408,7 @@ async def get_workload_analysis(
                 for r in recommendations
             ],
             analysis_period_days=days,
+            insights=pattern.get('insights', []),
             analyzed_at=datetime.utcnow()
         )
         

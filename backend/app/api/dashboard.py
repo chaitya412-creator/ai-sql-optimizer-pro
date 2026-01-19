@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import json
 
-from app.models.database import get_db, Connection, Query, Optimization
+from app.models.database import get_db, Connection, Query, Optimization, QueryIssue
 from app.models.schemas import (
     DashboardStats, QueryResponse, TopQuery, PerformanceTrend,
     DetectionSummary, IssueTypeSummary, CriticalIssuePreview,
@@ -227,7 +227,9 @@ async def get_performance_trends(
     """Get performance trends over time, optionally filtered by connection_id"""
     try:
         # Calculate time range
-        end_time = datetime.utcnow()
+        # Use UTC, but serialize with an explicit 'Z' so the frontend parses it as UTC.
+        # (Naive ISO strings are interpreted as local time by browsers.)
+        end_time = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
         start_time = end_time - timedelta(hours=hours)
         
         # Get queries discovered in the time range
@@ -238,12 +240,19 @@ async def get_performance_trends(
             query = query.filter(Query.connection_id == connection_id)
         queries = query.all()
         
-        # Group by hour and calculate metrics
+        # Build an hourly bucket for the full range so the UI always receives a
+        # consistent time series (even with sparse data).
         trends = {}
+        for i in range(hours):
+            hour_key = end_time - timedelta(hours=(hours - 1 - i))
+            hour_str = f"{hour_key.isoformat()}Z"
+            trends[hour_str] = {"total_time": 0, "count": 0, "slow_count": 0}
+
+        # Group by hour and calculate metrics
         for query in queries:
             # Round to hour
             hour_key = query.discovered_at.replace(minute=0, second=0, microsecond=0)
-            hour_str = hour_key.isoformat()
+            hour_str = f"{hour_key.isoformat()}Z"
             
             if hour_str not in trends:
                 trends[hour_str] = {
@@ -263,26 +272,16 @@ async def get_performance_trends(
         result = []
         for timestamp, data in sorted(trends.items()):
             avg_time = data["total_time"] / data["count"] if data["count"] > 0 else 0
-            result.append(PerformanceTrend(
-                timestamp=timestamp,
-                avg_time=avg_time,
-                slow_queries=data["slow_count"],
-                total_queries=data["count"]
-            ))
-        
-        # If no data, return empty trends for each hour
-        if not result:
-            for i in range(hours):
-                hour = end_time - timedelta(hours=i)
-                hour = hour.replace(minute=0, second=0, microsecond=0)
-                result.append(PerformanceTrend(
-                    timestamp=hour.isoformat(),
-                    avg_time=0,
-                    slow_queries=0,
-                    total_queries=0
-                ))
-        
-        return sorted(result, key=lambda x: x.timestamp)
+            result.append(
+                PerformanceTrend(
+                    timestamp=timestamp,
+                    avg_time=avg_time,
+                    slow_queries=data["slow_count"],
+                    total_queries=data["count"],
+                )
+            )
+
+        return result
     
     except Exception as e:
         logger.error(f"Error getting performance trends: {e}")

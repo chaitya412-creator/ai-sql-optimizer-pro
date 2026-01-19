@@ -59,8 +59,29 @@ class WorkloadAnalyzer:
             if not metrics:
                 return {
                     'connection_id': connection_id,
-                    'message': 'No workload data available',
-                    'pattern': 'unknown'
+                    'database_type': connection.engine,
+                    'analysis_period_days': days,
+                    'workload_type': 'unknown',
+                    'hourly_pattern': {'hourly_averages': {}, 'peak_hours': [], 'off_peak_hours': []},
+                    'daily_pattern': {'daily_averages': {}, 'busiest_day': 'Unknown', 'quietest_day': 'Unknown'},
+                    'query_pattern': {
+                        'total_queries': 0,
+                        'unique_queries': 0,
+                        'total_calls': 0,
+                        'avg_calls_per_query': 0,
+                        'slow_queries_count': 0,
+                        'slow_queries_pct': 0,
+                        'most_frequent': [],
+                        'most_expensive': []
+                    },
+                    'resource_pattern': {
+                        'cpu': {'avg': 0, 'max': 0, 'min': 0},
+                        'io': {'avg': 0, 'max': 0, 'min': 0},
+                        'memory': {'avg': 0, 'max': 0, 'min': 0}
+                    },
+                    'trends': [],
+                    'insights': ["No workload data available for analysis"],
+                    'analyzed_at': datetime.utcnow().isoformat()
                 }
             
             # Analyze patterns
@@ -215,8 +236,12 @@ class WorkloadAnalyzer:
                 return {
                     'total_queries': 0,
                     'unique_queries': 0,
+                    'total_calls': 0,
                     'avg_calls_per_query': 0,
-                    'slow_queries': 0
+                    'slow_queries_count': 0,
+                    'slow_queries_pct': 0,
+                    'most_frequent': [],
+                    'most_expensive': []
                 }
             
             total_queries = len(queries)
@@ -262,8 +287,12 @@ class WorkloadAnalyzer:
             return {
                 'total_queries': 0,
                 'unique_queries': 0,
+                'total_calls': 0,
                 'avg_calls_per_query': 0,
-                'slow_queries_count': 0
+                'slow_queries_count': 0,
+                'slow_queries_pct': 0,
+                'most_frequent': [],
+                'most_expensive': []
             }
     
     def _analyze_resource_pattern(self, metrics: List[WorkloadMetrics]) -> Dict:
@@ -293,7 +322,11 @@ class WorkloadAnalyzer:
             
         except Exception as e:
             logger.error(f"Error analyzing resource pattern: {str(e)}")
-            return {'cpu': {}, 'io': {}, 'memory': {}}
+            return {
+                'cpu': {'avg': 0, 'max': 0, 'min': 0},
+                'io': {'avg': 0, 'max': 0, 'min': 0},
+                'memory': {'avg': 0, 'max': 0, 'min': 0}
+            }
     
     def _classify_workload_type(
         self,

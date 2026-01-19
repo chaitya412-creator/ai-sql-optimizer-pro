@@ -27,6 +27,8 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 class ApiClient {
   private client: AxiosInstance;
 
+  private static readonly LONG_RUNNING_TIMEOUT_MS = 300000; // 5 minutes
+
   constructor() {
     this.client = axios.create({
       baseURL: API_URL,
@@ -67,7 +69,9 @@ class ApiClient {
 
   // Connection APIs
   async getConnections(): Promise<Connection[]> {
-    const response = await this.client.get('/api/connections');
+    // FastAPI redirects `/api/connections` -> `/api/connections/`.
+    // Avoid CORS/redirect edge cases by hitting the canonical route.
+    const response = await this.client.get('/api/connections/');
     return response.data;
   }
 
@@ -122,6 +126,11 @@ class ApiClient {
     return response.data;
   }
 
+  async getDiscoveredQuery(queryId: number): Promise<Query> {
+    const response = await this.client.get(`/api/monitoring/queries/${queryId}`);
+    return response.data;
+  }
+
   async getMonitoringIssues(params?: {
     connection_id?: number;
     severity?: string;
@@ -136,6 +145,24 @@ class ApiClient {
   async getIssuesSummary(connectionId?: number): Promise<any> {
     const params = connectionId ? { connection_id: connectionId } : {};
     const response = await this.client.get('/api/monitoring/issues/summary', { params });
+    return response.data;
+  }
+
+  async generateCorrectedCode(issueId: number): Promise<any> {
+    const response = await this.client.post(
+      `/api/monitoring/issues/${issueId}/generate-corrected-code`,
+      undefined,
+      { timeout: ApiClient.LONG_RUNNING_TIMEOUT_MS }
+    );
+    return response.data;
+  }
+
+  async generateOptimizedQuery(queryId: number): Promise<any> {
+    const response = await this.client.post(
+      `/api/monitoring/queries/${queryId}/generate-optimized-query`,
+      undefined,
+      { timeout: ApiClient.LONG_RUNNING_TIMEOUT_MS }
+    );
     return response.data;
   }
 
@@ -222,8 +249,11 @@ export const startMonitoring = () => api.startMonitoring();
 export const stopMonitoring = () => api.stopMonitoring();
 export const triggerMonitoring = () => api.triggerMonitoring();
 export const getDiscoveredQueries = (connectionId?: number) => api.getDiscoveredQueries(connectionId);
+export const getDiscoveredQuery = (queryId: number) => api.getDiscoveredQuery(queryId);
 export const getMonitoringIssues = (params?: any) => api.getMonitoringIssues(params);
 export const getIssuesSummary = (connectionId?: number) => api.getIssuesSummary(connectionId);
+export const generateCorrectedCode = (issueId: number) => api.generateCorrectedCode(issueId);
+export const generateOptimizedQuery = (queryId: number) => api.generateOptimizedQuery(queryId);
 export const optimizeQuery = (data: OptimizationRequest) => api.optimizeQuery(data);
 export const explainExecutionPlan = (data: ExplainPlanRequest) => api.explainExecutionPlan(data);
 export const generateFixRecommendations = (data: GenerateFixesRequest) => api.generateFixRecommendations(data);

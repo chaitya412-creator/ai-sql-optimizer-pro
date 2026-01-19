@@ -20,7 +20,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/feedback", tags=["feedback"])
+router = APIRouter()
+
 
 
 @router.post("", response_model=FeedbackResponse, status_code=status.HTTP_201_CREATED)

@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Play, Square, RefreshCw, Filter, AlertTriangle, XCircle, Info, Database, ArrowRight, Shield, TrendingUp, Zap } from 'lucide-react';
-import { getMonitoringStatus, startMonitoring, stopMonitoring, triggerMonitoring, getDiscoveredQueries, getConnections, getMonitoringIssues, getIssuesSummary } from '../services/api';
+import { Play, Square, RefreshCw, Filter, AlertTriangle, XCircle, Info, Database, ArrowRight, Shield, TrendingUp, Zap, Code, Copy, CheckCircle, Sparkles } from 'lucide-react';
+import { getMonitoringStatus, startMonitoring, stopMonitoring, triggerMonitoring, getDiscoveredQueries, getDiscoveredQuery, getConnections, getMonitoringIssues, getIssuesSummary, generateCorrectedCode, generateOptimizedQuery } from '../services/api';
 import type { MonitoringStatus, Query, Connection } from '../types';
 import { Link } from 'react-router-dom';
 
 interface MonitoringIssue {
   id: number;
-  query_id: number;
+  query_id: number | null;
   connection_id: number;
   issue_type: string;
   severity: string;
@@ -60,6 +60,15 @@ export default function Monitoring() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [correctedCode, setCorrectedCode] = useState<Map<number, any>>(new Map());
+  const [generatingCode, setGeneratingCode] = useState<Set<number>>(new Set());
+  const [copiedCode, setCopiedCode] = useState<Set<number>>(new Set());
+  const [queryDetails, setQueryDetails] = useState<Map<number, Query>>(new Map());
+  const [loadingQueryDetails, setLoadingQueryDetails] = useState<Set<number>>(new Set());
+  const [queryDetailsFailed, setQueryDetailsFailed] = useState<Set<number>>(new Set());
+  const [optimizedQueries, setOptimizedQueries] = useState<Map<number, any>>(new Map());
+  const [generatingOptimized, setGeneratingOptimized] = useState<Set<number>>(new Set());
+  const [expandedQueries, setExpandedQueries] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     loadData();
@@ -78,8 +87,14 @@ export default function Monitoring() {
       if (selectedIssueType) issuesParams.issue_type = selectedIssueType;
       
       const [statusData, queriesData, connectionsData, issuesData, summaryData] = await Promise.all([
-        getMonitoringStatus(),
-        getDiscoveredQueries(selectedConnection),
+        getMonitoringStatus().catch(err => {
+          console.error('Failed to fetch monitoring status:', err);
+          return null;
+        }),
+        getDiscoveredQueries(selectedConnection).catch(err => {
+          console.error('Failed to fetch queries:', err);
+          return [];
+        }),
         getConnections(),
         getMonitoringIssues(issuesParams).catch(() => []),
         getIssuesSummary(selectedConnection).catch(() => null),
@@ -167,6 +182,8 @@ export default function Monitoring() {
   };
 
   const toggleIssueExpansion = (issueId: number) => {
+    const isOpening = !expandedIssues.has(issueId);
+
     setExpandedIssues(prev => {
       const newSet = new Set(prev);
       if (newSet.has(issueId)) {
@@ -176,11 +193,120 @@ export default function Monitoring() {
       }
       return newSet;
     });
+
+    if (isOpening) {
+      const issue = issues.find(i => i.id === issueId);
+      const queryId = issue?.query_id;
+      if (typeof queryId === 'number') {
+        const alreadyInTopList = queries.some(q => q.id === queryId);
+        if (!alreadyInTopList) {
+          void ensureQueryLoaded(queryId);
+        }
+      }
+    }
+  };
+
+  const ensureQueryLoaded = async (queryId: number) => {
+    if (queryDetails.has(queryId)) return;
+    if (loadingQueryDetails.has(queryId)) return;
+    if (queryDetailsFailed.has(queryId)) return;
+
+    try {
+      setLoadingQueryDetails(prev => new Set(prev).add(queryId));
+      const q = await getDiscoveredQuery(queryId);
+      setQueryDetails(prev => new Map(prev).set(queryId, q));
+    } catch (err) {
+      console.error('Failed to fetch query details:', err);
+      setQueryDetailsFailed(prev => new Set(prev).add(queryId));
+    } finally {
+      setLoadingQueryDetails(prev => {
+        const next = new Set(prev);
+        next.delete(queryId);
+        return next;
+      });
+    }
   };
 
   const getUniqueIssueTypes = () => {
     const types = new Set(issues.map(issue => issue.issue_type));
     return Array.from(types);
+  };
+
+  const handleGenerateCorrectedCode = async (issueId: number) => {
+    try {
+      setGeneratingCode(prev => new Set(prev).add(issueId));
+      
+      const result = await generateCorrectedCode(issueId);
+      
+      if (result.success) {
+        setCorrectedCode(prev => new Map(prev).set(issueId, result));
+      } else {
+        alert(result.error || 'Failed to generate corrected code');
+      }
+    } catch (err: any) {
+      console.error('Error generating corrected code:', err);
+      alert(err.message || 'Failed to generate corrected code');
+    } finally {
+      setGeneratingCode(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(issueId);
+        return newSet;
+      });
+    }
+  };
+
+  const handleCopyCode = async (issueId: number, code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopiedCode(prev => new Set(prev).add(issueId));
+      
+      // Reset copied state after 2 seconds
+      setTimeout(() => {
+        setCopiedCode(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(issueId);
+          return newSet;
+        });
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy code:', err);
+      alert('Failed to copy code to clipboard');
+    }
+  };
+
+  const handleGenerateOptimizedQuery = async (queryId: number) => {
+    try {
+      setGeneratingOptimized(prev => new Set(prev).add(queryId));
+      
+      const result = await generateOptimizedQuery(queryId);
+      
+      if (result.success) {
+        setOptimizedQueries(prev => new Map(prev).set(queryId, result));
+      } else {
+        alert(result.error || 'Failed to generate optimized query');
+      }
+    } catch (err: any) {
+      console.error('Error generating optimized query:', err);
+      alert(err.message || 'Failed to generate optimized query');
+    } finally {
+      setGeneratingOptimized(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(queryId);
+        return newSet;
+      });
+    }
+  };
+
+  const toggleQueryExpansion = (queryId: number) => {
+    setExpandedQueries(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(queryId)) {
+        newSet.delete(queryId);
+      } else {
+        newSet.add(queryId);
+      }
+      return newSet;
+    });
   };
 
   if (loading && !status) {
@@ -538,7 +664,6 @@ export default function Monitoring() {
           <div className="p-6 space-y-4">
             {issues.map((issue) => {
               const isExpanded = expandedIssues.has(issue.id);
-              const relatedQuery = queries.find(q => q.id === issue.query_id);
               const connection = connections.find(c => c.id === issue.connection_id);
               
               return (
@@ -657,18 +782,140 @@ export default function Monitoring() {
                         )}
 
                         {/* Related Query */}
-                        {relatedQuery && (
+                        {(
+                          typeof issue.query_id === 'number' ||
+                          Boolean(correctedCode.get(issue.id)?.original_sql)
+                        ) && (
                           <div>
-                            <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                              Related Query:
-                            </p>
-                            <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded">
-                              <pre className="text-xs font-mono text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words">
-                                {relatedQuery.sql_text.length > 200
-                                  ? relatedQuery.sql_text.substring(0, 200) + '...'
-                                  : relatedQuery.sql_text}
-                              </pre>
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                                Original Query:
+                              </p>
+                              {typeof issue.query_id === 'number' && issue.recommendations && issue.recommendations.length > 0 && !correctedCode.has(issue.id) && (
+                                <button
+                                  onClick={() => handleGenerateCorrectedCode(issue.id)}
+                                  disabled={generatingCode.has(issue.id)}
+                                  className="flex items-center space-x-2 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white text-xs rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                  {generatingCode.has(issue.id) ? (
+                                    <>
+                                      <RefreshCw className="w-3 h-3 animate-spin" />
+                                      <span>Generating...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Code className="w-3 h-3" />
+                                      <span>Generate Corrected Code</span>
+                                    </>
+                                  )}
+                                </button>
+                              )}
                             </div>
+
+                            {(() => {
+                              const queryId = issue.query_id;
+                              const fromTopList = typeof queryId === 'number' ? queries.find(q => q.id === queryId) : undefined;
+                              const fromDetails = typeof queryId === 'number' ? queryDetails.get(queryId) : undefined;
+                              const sqlText = fromTopList?.sql_text || fromDetails?.sql_text || correctedCode.get(issue.id)?.original_sql;
+
+                              if (sqlText) {
+                                return (
+                                  <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded">
+                                    <pre className="text-xs font-mono text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words">
+                                      {sqlText.length > 200 ? sqlText.substring(0, 200) + '...' : sqlText}
+                                    </pre>
+                                  </div>
+                                );
+                              }
+
+                              if (typeof queryId === 'number') {
+                                if (loadingQueryDetails.has(queryId)) {
+                                  return (
+                                    <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded">
+                                      <p className="text-xs text-gray-600 dark:text-gray-400">Loading original query…</p>
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded">
+                                    <p className="text-xs text-gray-600 dark:text-gray-400">Original query not available for this issue.</p>
+                                  </div>
+                                );
+                              }
+
+                              return null;
+                            })()}
+                          </div>
+                        )}
+
+                        {/* Generated Corrected Code */}
+                        {correctedCode.has(issue.id) && (
+                          <div className="bg-gradient-to-br from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 border-2 border-green-300 dark:border-green-700 rounded-lg p-4">
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center space-x-2">
+                                <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
+                                <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                                  ✨ AI-Generated Corrected Code (olmo-3:latest)
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => handleCopyCode(issue.id, correctedCode.get(issue.id)?.corrected_sql || '')}
+                                className="flex items-center space-x-1 px-3 py-1.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-xs rounded hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+                              >
+                                {copiedCode.has(issue.id) ? (
+                                  <>
+                                    <CheckCircle className="w-3 h-3 text-green-600" />
+                                    <span>Copied!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3 h-3" />
+                                    <span>Copy Code</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                            
+                            {/* Corrected SQL Code */}
+                            <div className="mb-3">
+                              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 max-h-96 overflow-y-auto">
+                                <pre className="text-xs font-mono text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words">
+                                  {correctedCode.get(issue.id)?.corrected_sql}
+                                </pre>
+                              </div>
+                            </div>
+
+                            {/* Explanation */}
+                            {correctedCode.get(issue.id)?.explanation && (
+                              <div className="mb-3">
+                                <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                                  📝 Explanation:
+                                </p>
+                                <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                                  <p className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                                    {correctedCode.get(issue.id)?.explanation}
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Changes Made */}
+                            {correctedCode.get(issue.id)?.changes_made && correctedCode.get(issue.id)?.changes_made.length > 0 && (
+                              <div>
+                                <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                                  🔧 Changes Made:
+                                </p>
+                                <ul className="space-y-1">
+                                  {correctedCode.get(issue.id)?.changes_made.map((change: string, idx: number) => (
+                                    <li key={idx} className="text-xs flex items-start space-x-2 text-gray-700 dark:text-gray-300">
+                                      <span className="text-green-600 dark:text-green-400">✓</span>
+                                      <span className="flex-1">{change}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -689,68 +936,202 @@ export default function Monitoring() {
               Discovered Queries
             </h2>
             <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-              {queries.length} quer{queries.length !== 1 ? 'ies' : 'y'} discovered
+              {queries.length} quer{queries.length !== 1 ? 'ies' : 'y'} discovered - Click to expand and optimize with sqlcoder:latest
             </p>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 dark:bg-gray-900/50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Query
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Connection
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Avg Duration
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Executions
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Last Seen
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                {queries.map((query) => {
-                  const connection = connections.find(c => c.id === query.connection_id);
-                  return (
-                    <tr key={query.id} className="hover:bg-gray-50 dark:hover:bg-gray-900/50">
-                      <td className="px-6 py-4">
-                        <div className="text-sm font-mono text-gray-900 dark:text-white max-w-md truncate">
-                          {query.sql_text}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center space-x-2">
+          <div className="p-6 space-y-4">
+            {queries.map((query) => {
+              const connection = connections.find(c => c.id === query.connection_id);
+              const isExpanded = expandedQueries.has(query.id);
+              const hasOptimized = optimizedQueries.has(query.id);
+              const isGenerating = generatingOptimized.has(query.id);
+              
+              return (
+                <div key={query.id} className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                  {/* Query Header */}
+                  <div className="bg-gray-50 dark:bg-gray-900/50 p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-3 mb-2">
                           <Database className="w-4 h-4 text-gray-400" />
-                          <span className="text-sm text-gray-900 dark:text-white">
-                            {connection?.name || 'Unknown'}
+                          <span className="text-sm font-medium text-gray-900 dark:text-white">
+                            {connection?.name || 'Unknown'} ({connection?.engine || 'Unknown'})
+                          </span>
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            Avg: {query.avg_execution_time.toFixed(2)} ms
+                          </span>
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            Calls: {query.calls}
+                          </span>
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            Last seen: {formatDate(query.last_seen)}
                           </span>
                         </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm text-gray-900 dark:text-white">
-                          {query.avg_execution_time.toFixed(2)} ms
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm text-gray-900 dark:text-white">
-                          {query.calls}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm text-gray-500 dark:text-gray-400">
-                          {formatDate(query.last_seen)}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        <div className="text-sm font-mono text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 p-2 rounded border border-gray-200 dark:border-gray-700">
+                          {query.sql_text.length > 150 ? query.sql_text.substring(0, 150) + '...' : query.sql_text}
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2 ml-4">
+                        {!hasOptimized && (
+                          <button
+                            onClick={() => handleGenerateOptimizedQuery(query.id)}
+                            disabled={isGenerating}
+                            className="flex items-center space-x-2 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs rounded-lg transition-colors disabled:opacity-50"
+                          >
+                            {isGenerating ? (
+                              <>
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                <span>Optimizing...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="w-3 h-3" />
+                                <span>Optimize (sqlcoder)</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => toggleQueryExpansion(query.id)}
+                          className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                        >
+                          {isExpanded ? 'Hide Details' : 'Show Details'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Expanded Details */}
+                  {isExpanded && (
+                    <div className="p-4 space-y-4 bg-white dark:bg-gray-800">
+                      {/* Full Original Query */}
+                      <div>
+                        <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                          Original Query:
+                        </p>
+                        <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                          <pre className="text-xs font-mono text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words">
+                            {query.sql_text}
+                          </pre>
+                        </div>
+                      </div>
+
+                      {/* Query Metrics */}
+                      <div>
+                        <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                          Performance Metrics:
+                        </p>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                            <p className="text-xs text-blue-600 dark:text-blue-400">Avg Execution Time</p>
+                            <p className="text-lg font-bold text-blue-700 dark:text-blue-300">
+                              {query.avg_execution_time.toFixed(2)} ms
+                            </p>
+                          </div>
+                          <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-3">
+                            <p className="text-xs text-purple-600 dark:text-purple-400">Total Execution Time</p>
+                            <p className="text-lg font-bold text-purple-700 dark:text-purple-300">
+                              {query.total_execution_time.toFixed(2)} ms
+                            </p>
+                          </div>
+                          <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3">
+                            <p className="text-xs text-green-600 dark:text-green-400">Executions</p>
+                            <p className="text-lg font-bold text-green-700 dark:text-green-300">
+                              {query.calls}
+                            </p>
+                          </div>
+                          <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-3">
+                            <p className="text-xs text-orange-600 dark:text-orange-400">Discovered At</p>
+                            <p className="text-xs font-medium text-orange-700 dark:text-orange-300">
+                              {formatDate(query.discovered_at)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Optimized Query Results */}
+                      {hasOptimized && (
+                        <div className="bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-900/20 dark:to-purple-900/20 border-2 border-indigo-300 dark:border-indigo-700 rounded-lg p-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center space-x-2">
+                              <Sparkles className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                              <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                                ✨ AI-Optimized Query (sqlcoder:latest)
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => handleCopyCode(query.id, optimizedQueries.get(query.id)?.optimized_sql || '')}
+                              className="flex items-center space-x-1 px-3 py-1.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-xs rounded hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+                            >
+                              {copiedCode.has(query.id) ? (
+                                <>
+                                  <CheckCircle className="w-3 h-3 text-green-600" />
+                                  <span>Copied!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3 h-3" />
+                                  <span>Copy Optimized Query</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+
+                          {/* Optimized SQL */}
+                          <div className="mb-3">
+                            <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                              Optimized SQL:
+                            </p>
+                            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 max-h-96 overflow-y-auto">
+                              <pre className="text-xs font-mono text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words">
+                                {optimizedQueries.get(query.id)?.optimized_sql}
+                              </pre>
+                            </div>
+                          </div>
+
+                          {/* Estimated Improvement */}
+                          {optimizedQueries.get(query.id)?.estimated_improvement && (
+                            <div className="mb-3 p-3 bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700 rounded-lg">
+                              <p className="text-sm font-semibold text-green-800 dark:text-green-300">
+                                📊 Estimated Performance Improvement: {optimizedQueries.get(query.id)?.estimated_improvement}% faster
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Explanation */}
+                          {optimizedQueries.get(query.id)?.explanation && (
+                            <div className="mb-3">
+                              <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                                📝 Optimization Explanation:
+                              </p>
+                              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                                <p className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                                  {optimizedQueries.get(query.id)?.explanation}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Recommendations */}
+                          {optimizedQueries.get(query.id)?.recommendations && (
+                            <div>
+                              <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                                💡 Additional Recommendations:
+                              </p>
+                              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                                <p className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                                  {optimizedQueries.get(query.id)?.recommendations}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

@@ -825,51 +825,85 @@ async def generate_fix_recommendations(
         
         index_recs = []
         if request.include_indexes and result.get("index_recommendations"):
-            for idx_sql in result["index_recommendations"]:
+            for rec in result["index_recommendations"]:
+                sql = rec.get("sql") if isinstance(rec, dict) else str(rec)
+                if not sql:
+                    continue
                 index_recs.append(schemas.FixRecommendation(
-                    fix_type="index_creation",
-                    sql=idx_sql,
-                    description="Create missing index",
-                    estimated_impact="high",
-                    affected_objects=[],
-                    safety_level="safe"
+                    fix_type=(rec.get("fix_type") if isinstance(rec, dict) else "index_creation") or "index_creation",
+                    sql=sql,
+                    description=(rec.get("description") if isinstance(rec, dict) else None) or "Index recommendation",
+                    estimated_impact=(rec.get("estimated_impact") if isinstance(rec, dict) else None) or "high",
+                    affected_objects=(rec.get("affected_objects") if isinstance(rec, dict) else None) or [],
+                    safety_level=(rec.get("safety_level") if isinstance(rec, dict) else None) or "safe"
                 ))
         
         maintenance_tasks = []
         if request.include_maintenance and result.get("maintenance_tasks"):
-            for task_sql in result["maintenance_tasks"]:
-                task_type = "statistics_update" if "ANALYZE" in task_sql.upper() else "vacuum"
+            for rec in result["maintenance_tasks"]:
+                sql = rec.get("sql") if isinstance(rec, dict) else str(rec)
+                if not sql:
+                    continue
+                task_type = (rec.get("fix_type") if isinstance(rec, dict) else None) or (
+                    "statistics_update" if "ANALYZE" in sql.upper() else "vacuum"
+                )
                 maintenance_tasks.append(schemas.FixRecommendation(
                     fix_type=task_type,
-                    sql=task_sql,
-                    description="Maintenance task",
-                    estimated_impact="medium",
-                    affected_objects=[],
-                    safety_level="safe"
+                    sql=sql,
+                    description=(rec.get("description") if isinstance(rec, dict) else None) or "Maintenance task",
+                    estimated_impact=(rec.get("estimated_impact") if isinstance(rec, dict) else None) or "medium",
+                    affected_objects=(rec.get("affected_objects") if isinstance(rec, dict) else None) or [],
+                    safety_level=(rec.get("safety_level") if isinstance(rec, dict) else None) or "safe"
                 ))
         
         query_rewrites = []
         if request.include_rewrites and result.get("query_rewrites"):
-            for rewrite in result["query_rewrites"]:
+            for rec in result["query_rewrites"]:
+                if isinstance(rec, dict):
+                    sql = rec.get("sql") or ""
+                    desc = rec.get("description") or "Query rewrite"
+                    impact = rec.get("estimated_impact") or "medium"
+                    affected = rec.get("affected_objects") or []
+                    safety = rec.get("safety_level") or "safe"
+                else:
+                    sql = ""
+                    desc = str(rec)
+                    impact = "medium"
+                    affected = []
+                    safety = "safe"
+
                 query_rewrites.append(schemas.FixRecommendation(
                     fix_type="query_rewrite",
-                    sql="",
-                    description=rewrite,
-                    estimated_impact="medium",
-                    affected_objects=[],
-                    safety_level="safe"
+                    sql=sql,
+                    description=desc,
+                    estimated_impact=impact,
+                    affected_objects=affected,
+                    safety_level=safety
                 ))
         
         config_changes = []
         if request.include_config and result.get("configuration_changes"):
-            for config in result["configuration_changes"]:
+            for rec in result["configuration_changes"]:
+                if isinstance(rec, dict):
+                    sql = rec.get("sql") or ""
+                    desc = rec.get("description") or "Configuration change"
+                    impact = rec.get("estimated_impact") or "low"
+                    affected = rec.get("affected_objects") or []
+                    safety = rec.get("safety_level") or "caution"
+                else:
+                    sql = ""
+                    desc = str(rec)
+                    impact = "low"
+                    affected = []
+                    safety = "caution"
+
                 config_changes.append(schemas.FixRecommendation(
                     fix_type="configuration_change",
-                    sql="",
-                    description=config,
-                    estimated_impact="low",
-                    affected_objects=[],
-                    safety_level="caution"
+                    sql=sql,
+                    description=desc,
+                    estimated_impact=impact,
+                    affected_objects=affected,
+                    safety_level=safety
                 ))
         
         total_fixes = len(index_recs) + len(maintenance_tasks) + len(query_rewrites) + len(config_changes)

@@ -9,7 +9,7 @@ from typing import List, Dict, Any
 from loguru import logger
 import hashlib
 
-from app.models.database import SessionLocal, Connection, Query, QueryIssue
+from app.models.database import SessionLocal, Connection, Query, QueryIssue, WorkloadMetrics
 from app.core.db_manager import DatabaseManager
 from app.core.security import security_manager
 from app.core.plan_analyzer import PlanAnalyzer
@@ -160,12 +160,22 @@ class MonitoringAgent:
                 
                 # Store queries in observability database
                 queries_added = 0
+                total_calls = 0
+                weighted_exec_ms_sum = 0.0
+                slow_queries_count = 0
                 for query_data in slow_queries:
                     try:
                         # Generate query hash
                         sql_text = query_data.get("sql_text", "")
                         if not sql_text or sql_text.strip() == "":
                             continue
+
+                        calls = int(query_data.get("calls", 0) or 0)
+                        avg_time_ms = float(query_data.get("avg_time_ms", 0) or 0.0)
+                        total_calls += calls
+                        weighted_exec_ms_sum += avg_time_ms * calls
+                        if avg_time_ms >= 1000:
+                            slow_queries_count += 1
                         
                         query_hash = hashlib.sha256(sql_text.encode()).hexdigest()[:64]
                         
@@ -214,6 +224,28 @@ class MonitoringAgent:
                     except Exception as e:
                         logger.error(f"Error storing query: {e}")
                         db.rollback()
+
+                # Store workload metrics even if no queries were discovered.
+                # This ensures Workload Analysis can show charts once monitoring runs.
+                try:
+                    avg_exec_time_ms = (weighted_exec_ms_sum / total_calls) if total_calls > 0 else 0.0
+                    workload_metric = WorkloadMetrics(
+                        connection_id=conn.id,
+                        timestamp=datetime.utcnow(),
+                        total_queries=total_calls,
+                        avg_exec_time=avg_exec_time_ms,
+                        cpu_usage=None,
+                        io_usage=None,
+                        memory_usage=None,
+                        active_connections=None,
+                        slow_queries_count=slow_queries_count,
+                        workload_type=None,
+                    )
+                    db.add(workload_metric)
+                    db.commit()
+                except Exception as e:
+                    logger.error(f"Error storing workload metrics for connection {conn.id}: {e}")
+                    db.rollback()
                 
                 logger.info(f"Added {queries_added} new queries from {conn.name}")
                 return queries_added

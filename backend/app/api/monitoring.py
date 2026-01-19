@@ -9,6 +9,7 @@ from datetime import datetime
 from app.models.database import get_db, Query, Connection
 from app.models.schemas import QueryResponse, MonitoringStatus
 from loguru import logger
+from app.config import settings
 
 router = APIRouter()
 
@@ -42,6 +43,7 @@ async def get_monitoring_status(db: Session = Depends(get_db)):
         total_queries = db.query(Query).count()
         status_data["queries_discovered"] = total_queries
         
+        return status_data
     
     except Exception as e:
         logger.error(f"Error getting monitoring status: {e}")
@@ -303,6 +305,190 @@ async def get_monitoring_issues(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch issues: {str(e)}"
+        )
+
+
+@router.post("/issues/{issue_id}/generate-corrected-code")
+async def generate_corrected_code_for_issue(
+    issue_id: int,
+    db: Session = Depends(get_db)
+):
+    """Generate corrected SQL code for a specific issue using olmo-3:latest"""
+    try:
+        from app.models.database import QueryIssue
+        from app.core.ollama_client import OllamaClient
+        
+        logger.info(f"Generating corrected code for issue {issue_id}")
+        
+        # Get the issue
+        issue = db.query(QueryIssue).filter(QueryIssue.id == issue_id).first()
+        if not issue:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Issue with id {issue_id} not found"
+            )
+        
+        # Get the related query
+        query = db.query(Query).filter(Query.id == issue.query_id).first()
+        if not query:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Query with id {issue.query_id} not found"
+            )
+        
+        # Get the connection to determine database type
+        connection = db.query(Connection).filter(Connection.id == issue.connection_id).first()
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Connection with id {issue.connection_id} not found"
+            )
+        
+        # Prepare issue details
+        issue_details = {
+            "issue_type": issue.issue_type,
+            "severity": issue.severity,
+            "title": issue.title,
+            "description": issue.description,
+            "affected_objects": issue.affected_objects,
+            "metrics": issue.metrics
+        }
+        
+        # Initialize Ollama client
+        ollama_client = OllamaClient()
+
+        # Check Ollama health and model availability
+        code_gen_model = settings.OLLAMA_CODE_GENERATION_MODEL
+        health_status = await ollama_client.check_health(model_name=code_gen_model)
+        
+        if not health_status.get("model_available"):
+            logger.error(f"Ollama code generation model '{code_gen_model}' is not available. Status: {health_status}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"The code generation model '{code_gen_model}' is not available in the Ollama service. Please ensure the model is pulled and running."
+            )
+        
+        # Generate corrected code
+        result = await ollama_client.generate_corrected_code(
+            original_sql=query.sql_text,
+            issue_details=issue_details,
+            recommendations=issue.recommendations,
+            database_type=connection.engine,
+            schema_ddl=None  # Could be enhanced to fetch schema
+        )
+        
+        if not result.get("success"):
+            logger.error(f"Failed to generate corrected code: {result.get('error')}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to generate corrected code: {result.get('error', 'Unknown error')}"
+            )
+        
+        logger.info(f"Successfully generated corrected code for issue {issue_id}")
+
+        return {
+            "success": True,
+            "issue_id": issue_id,
+            "original_sql": query.sql_text,
+            "corrected_sql": result["corrected_sql"],
+            "explanation": result["explanation"],
+            "changes_made": result["changes_made"],
+            "used_model": result.get("used_model"),
+            "tried_models": result.get("tried_models"),
+            "issue_details": {
+                "type": issue.issue_type,
+                "severity": issue.severity,
+                "title": issue.title,
+                "recommendations": issue.recommendations
+            }
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating corrected code for issue {issue_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate corrected code: {str(e)}"
+        )
+
+
+@router.post("/queries/{query_id}/generate-optimized-query")
+async def generate_optimized_query_for_discovered_query(
+    query_id: int,
+    db: Session = Depends(get_db)
+):
+    """Generate optimized SQL query using sqlcoder:latest for a discovered query"""
+    try:
+        from app.core.ollama_client import OllamaClient
+        
+        logger.info(f"Generating optimized query for query {query_id} using sqlcoder:latest")
+        
+        # Get the query
+        query = db.query(Query).filter(Query.id == query_id).first()
+        if not query:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Query with id {query_id} not found"
+            )
+        
+        # Get the connection to determine database type
+        connection = db.query(Connection).filter(Connection.id == query.connection_id).first()
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Connection with id {query.connection_id} not found"
+            )
+        
+        # Initialize Ollama client
+        ollama_client = OllamaClient()
+        
+        # Generate optimized query using sqlcoder:latest
+        # Note: We don't have execution plan or schema DDL here, but sqlcoder can still optimize
+        result = await ollama_client.optimize_query(
+            sql_query=query.sql_text,
+            schema_ddl="",  # Could be enhanced to fetch schema
+            execution_plan=None,
+            database_type=connection.engine,
+            detected_issues=None
+        )
+        
+        if not result.get("success"):
+            logger.error(f"Failed to generate optimized query: {result.get('error')}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to generate optimized query: {result.get('error', 'Unknown error')}"
+            )
+        
+        logger.info(f"Successfully generated optimized query for query {query_id}")
+        
+        return {
+            "success": True,
+            "query_id": query_id,
+            "original_sql": query.sql_text,
+            "optimized_sql": result["optimized_sql"],
+            "explanation": result["explanation"],
+            "recommendations": result["recommendations"],
+            "estimated_improvement": result.get("estimated_improvement"),
+            "query_metrics": {
+                "avg_execution_time": query.avg_exec_time_ms,
+                "total_execution_time": query.total_exec_time_ms,
+                "calls": query.calls,
+                "rows_returned": query.rows_returned
+            },
+            "connection": {
+                "name": connection.name,
+                "engine": connection.engine
+            }
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating optimized query for query {query_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate optimized query: {str(e)}"
         )
 
 

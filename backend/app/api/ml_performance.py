@@ -21,7 +21,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/ml", tags=["ml-performance"])
+router = APIRouter()
+
 
 
 @router.get("/accuracy", response_model=AccuracyMetrics)

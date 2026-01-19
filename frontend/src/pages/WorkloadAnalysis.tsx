@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { 
   TrendingUp, 
   Clock, 
@@ -104,6 +105,13 @@ export default function WorkloadAnalysisPage() {
     return '➡️';
   };
 
+  const hourlyAverages = analysis?.hourly_pattern?.hourly_averages ?? {};
+  const dailyAverages = analysis?.daily_pattern?.daily_averages ?? {};
+  const hasHourlyData = Object.keys(hourlyAverages).length > 0;
+  const hasDailyData = Object.keys(dailyAverages).length > 0;
+  const hasQueryData = (analysis?.query_pattern?.total_calls ?? 0) > 0;
+  const hasAnyWorkloadData = hasHourlyData || hasDailyData || hasQueryData;
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -193,6 +201,36 @@ export default function WorkloadAnalysisPage() {
       {/* Analysis Results */}
       {!loading && analysis && (
         <>
+          {/* No Data Callout */}
+          {!hasAnyWorkloadData && (
+            <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-yellow-700 dark:text-yellow-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="font-semibold text-yellow-900 dark:text-yellow-200">No workload metrics collected yet</h3>
+                <p className="text-yellow-800 dark:text-yellow-300 text-sm mt-1">
+                  This page needs monitoring data to show patterns and charts. Start monitoring for this connection, wait a few minutes, then refresh.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-3">
+                  <Link
+                    to="/monitoring"
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-600 text-white hover:bg-yellow-700 transition-colors text-sm"
+                  >
+                    <Activity className="w-4 h-4" />
+                    Go to Monitoring
+                  </Link>
+                  <button
+                    onClick={loadAnalysis}
+                    disabled={loading || !selectedConnection}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-yellow-300 dark:border-yellow-700 text-yellow-900 dark:text-yellow-200 hover:bg-yellow-100 dark:hover:bg-yellow-900/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                    Refresh Analysis
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Overview Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Workload Type */}
@@ -252,35 +290,42 @@ export default function WorkloadAnalysisPage() {
               <BarChart3 className="w-5 h-5 text-blue-600" />
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Peak Hours Analysis</h2>
             </div>
-            <div className="space-y-2">
-              {Object.entries(analysis.hourly_pattern.hourly_averages).map(([hour, data]: [string, any]) => {
-                const isPeak = analysis.hourly_pattern.peak_hours.includes(Number(hour));
-                const maxQueries = Math.max(...Object.values(analysis.hourly_pattern.hourly_averages).map((d: any) => d.avg_queries));
-                const width = (data.avg_queries / maxQueries) * 100;
+            {!hasHourlyData ? (
+              <div className="text-sm text-gray-600 dark:text-gray-400">
+                No hourly metrics found for the selected period.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {Object.entries(hourlyAverages).map(([hour, data]: [string, any]) => {
+                  const isPeak = analysis.hourly_pattern.peak_hours.includes(Number(hour));
+                  const maxQueries = Math.max(...Object.values(hourlyAverages).map((d: any) => d.avg_queries));
+                  const safeMax = Number.isFinite(maxQueries) && maxQueries > 0 ? maxQueries : 1;
+                  const width = (data.avg_queries / safeMax) * 100;
 
-                return (
-                  <div key={hour} className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-gray-600 dark:text-gray-400 w-16">
-                      {hour}:00
-                    </span>
-                    <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-8 relative overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all ${
-                          isPeak ? 'bg-gradient-to-r from-red-500 to-orange-500' : 'bg-gradient-to-r from-blue-500 to-cyan-500'
-                        }`}
-                        style={{ width: `${width}%` }}
-                      />
-                      <span className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-900 dark:text-white">
-                        {data.avg_queries.toFixed(0)} queries
+                  return (
+                    <div key={hour} className="flex items-center gap-3">
+                      <span className="text-sm font-medium text-gray-600 dark:text-gray-400 w-16">
+                        {hour}:00
                       </span>
+                      <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-8 relative overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            isPeak ? 'bg-gradient-to-r from-red-500 to-orange-500' : 'bg-gradient-to-r from-blue-500 to-cyan-500'
+                          }`}
+                          style={{ width: `${width}%` }}
+                        />
+                        <span className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-900 dark:text-white">
+                          {data.avg_queries.toFixed(0)} queries
+                        </span>
+                      </div>
+                      {isPeak && (
+                        <span className="text-xs font-medium text-red-600 dark:text-red-400">PEAK</span>
+                      )}
                     </div>
-                    {isPeak && (
-                      <span className="text-xs font-medium text-red-600 dark:text-red-400">PEAK</span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Performance Trends */}

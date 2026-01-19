@@ -99,7 +99,22 @@ export const configurationService = {
     const response = await (api as any).client.get(
       `/api/config/recommendations/${connectionId}`
     );
-    return response.data;
+    // Map backend snake_case to frontend interface
+    if (Array.isArray(response.data)) {
+      return response.data.map((item: any) => ({
+        parameter: item.parameter_name,
+        current_value: item.current_value,
+        recommended_value: item.recommended_value,
+        reason: item.change_reason,
+        impact_estimate: typeof item.estimated_impact === 'object' 
+          ? Object.entries(item.estimated_impact).map(([k, v]) => `${k}: ${v}`).join(', ')
+          : String(item.estimated_impact || 'Moderate'),
+        priority: item.priority,
+        requires_restart: false, 
+        category: item.database_type || 'General'
+      }));
+    }
+    return [];
   },
 
   /**
@@ -116,8 +131,29 @@ export const configurationService = {
    * Apply a configuration change
    */
   async applyChange(data: ConfigApplyRequest): Promise<ConfigChange> {
-    const response = await (api as any).client.post('/api/config/apply', data);
-    return response.data;
+    const payload = {
+      connection_id: data.connection_id,
+      parameter_name: data.parameter,
+      new_value: data.new_value,
+      change_reason: "Manual application via UI",
+      dry_run: false
+    };
+    
+    const response = await (api as any).client.post('/api/config/apply', payload);
+    const item = response.data;
+    return {
+      id: item.id,
+      connection_id: item.connection_id,
+      parameter: item.parameter_name,
+      old_value: item.old_value,
+      new_value: item.new_value,
+      status: item.status,
+      applied_at: item.applied_at,
+      reverted_at: item.reverted_at,
+      impact_measured: !!item.actual_impact,
+      performance_impact: 0, 
+      created_at: item.applied_at
+    };
   },
 
   /**
@@ -127,7 +163,20 @@ export const configurationService = {
     const response = await (api as any).client.post(
       `/api/config/revert/${changeId}`
     );
-    return response.data;
+    const item = response.data;
+    return {
+      id: item.id,
+      connection_id: item.connection_id,
+      parameter: item.parameter_name,
+      old_value: item.old_value,
+      new_value: item.new_value,
+      status: item.status,
+      applied_at: item.applied_at,
+      reverted_at: item.reverted_at,
+      impact_measured: !!item.actual_impact,
+      performance_impact: 0, 
+      created_at: item.applied_at || new Date().toISOString()
+    };
   },
 
   /**
@@ -138,7 +187,10 @@ export const configurationService = {
     parameter: string;
     new_value: string;
   }): Promise<ConfigValidation> {
-    const response = await (api as any).client.post('/api/config/validate', data);
+    const response = await (api as any).client.post('/api/config/validate', {
+        ...data,
+        parameter_name: data.parameter
+    });
     return response.data;
   },
 
@@ -149,7 +201,22 @@ export const configurationService = {
     const response = await (api as any).client.get(
       `/api/config/history/${connectionId}`
     );
-    return response.data;
+    if (Array.isArray(response.data)) {
+        return response.data.map((item: any) => ({
+          id: item.id,
+          connection_id: item.connection_id,
+          parameter: item.parameter_name,
+          old_value: item.old_value,
+          new_value: item.new_value,
+          status: item.status,
+          applied_at: item.applied_at,
+          reverted_at: item.reverted_at,
+          impact_measured: !!item.actual_impact,
+          performance_impact: 0, 
+          created_at: item.applied_at || new Date().toISOString()
+        }));
+    }
+    return [];
   },
 
   /**
@@ -159,7 +226,18 @@ export const configurationService = {
     const response = await (api as any).client.get(
       `/api/config/workload/analysis/${connectionId}`
     );
-    return response.data;
+    const data = response.data;
+    return {
+      connection_id: data.connection_id,
+      workload_type: data.workload_type as 'OLTP' | 'OLAP' | 'Mixed',
+      peak_hours: data.peak_hours,
+      avg_query_rate: data.avg_query_rate,
+      avg_execution_time: data.avg_execution_time,
+      total_queries: data.total_queries,
+      slow_queries_count: data.slow_queries_count,
+      analysis_period: `${data.analysis_period_days || 7} days`,
+      insights: data.insights
+    };
   },
 
   /**

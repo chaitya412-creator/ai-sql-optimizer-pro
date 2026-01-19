@@ -202,7 +202,9 @@ const IndexManagement: React.FC = () => {
   };
 
   const renderUnusedIndexes = () => {
-    if (!unusedIndexes || unusedIndexes.unused_indexes.length === 0) {
+    const unusedList = Array.isArray(unusedIndexes?.unused_indexes) ? unusedIndexes.unused_indexes : [];
+
+    if (unusedList.length === 0) {
       return (
         <div className="bg-white rounded-lg shadow-md p-12 text-center">
           <TrendingUp className="w-16 h-16 text-green-400 mx-auto mb-4" />
@@ -216,7 +218,7 @@ const IndexManagement: React.FC = () => {
 
     return (
       <div className="space-y-4">
-        {unusedIndexes.unused_indexes.map((idx: any, index: number) => (
+        {unusedList.map((idx: any, index: number) => (
           <div key={index} className="bg-white rounded-lg shadow-md p-6">
             <div className="flex items-start justify-between mb-4">
               <div>
@@ -254,7 +256,9 @@ const IndexManagement: React.FC = () => {
   };
 
   const renderMissingIndexes = () => {
-    if (!missingIndexes || missingIndexes.missing_indexes.length === 0) {
+    const missingList = Array.isArray(missingIndexes?.missing_indexes) ? missingIndexes.missing_indexes : [];
+
+    if (missingList.length === 0) {
       return (
         <div className="bg-white rounded-lg shadow-md p-12 text-center">
           <Database className="w-16 h-16 text-green-400 mx-auto mb-4" />
@@ -268,7 +272,7 @@ const IndexManagement: React.FC = () => {
 
     return (
       <div className="space-y-4">
-        {missingIndexes.missing_indexes.map((idx: any, index: number) => (
+        {missingList.map((idx: any, index: number) => (
           <div key={index} className="bg-white rounded-lg shadow-md p-6">
             <div className="flex items-start justify-between mb-4">
               <div>
@@ -321,7 +325,9 @@ const IndexManagement: React.FC = () => {
   };
 
   const renderHistory = () => {
-    if (!history || history.changes.length === 0) {
+    const changes = Array.isArray(history?.changes) ? history.changes : [];
+
+    if (changes.length === 0) {
       return (
         <div className="bg-white rounded-lg shadow-md p-12 text-center">
           <Clock className="w-16 h-16 text-gray-400 mx-auto mb-4" />
@@ -341,7 +347,7 @@ const IndexManagement: React.FC = () => {
           </h3>
         </div>
         <div className="divide-y divide-gray-200">
-          {history.changes.map((change: IndexRecommendation) => (
+          {changes.map((change: IndexRecommendation) => (
             <div key={change.id} className="p-6 hover:bg-gray-50">
               <div className="flex items-start justify-between">
                 <div className="flex-1">

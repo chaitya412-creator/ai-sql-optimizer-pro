@@ -24,6 +24,7 @@ export default function ConfigCard({
 }: ConfigCardProps) {
   const [loading, setLoading] = useState(false);
   const [applied, setApplied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
@@ -51,11 +52,13 @@ export default function ConfigCard({
 
   const handleApply = async () => {
     setLoading(true);
+    setError(null);
     try {
       await onApply(recommendation.parameter, recommendation.recommended_value);
       setApplied(true);
     } catch (error) {
       console.error('Failed to apply configuration:', error);
+      setError('Failed to apply. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -192,6 +195,9 @@ export default function ConfigCard({
             <X className="w-4 h-4" />
             <span>Reject</span>
           </button>
+        )}
+        {error && (
+          <p className="text-xs text-red-600 dark:text-red-400 mt-2">{error}</p>
         )}
       </div>
     </div>

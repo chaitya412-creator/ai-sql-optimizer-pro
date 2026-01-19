@@ -4,6 +4,7 @@ Enhanced with sqlcoder:latest model for intelligent SQL optimization
 """
 import httpx
 import json
+import re
 from typing import Dict, Any, Optional, List
 from loguru import logger
 from app.config import settings
@@ -20,9 +21,10 @@ class OllamaClient:
         # Ensure all calls use the configured model (avoid hard-coded sqlcoder:latest)
         self.request_model = self.model
     
-    async def check_health(self) -> Dict[str, Any]:
-        """Check if Ollama is accessible and model is available"""
+    async def check_health(self, model_name: Optional[str] = None) -> Dict[str, Any]:
+        """Check if Ollama is accessible and a specific model is available"""
         try:
+            model_to_check = model_name if model_name is not None else self.model
             async with httpx.AsyncClient(timeout=10.0) as client:
                 # Check if Ollama is running
                 response = await client.get(f"{self.base_url}/api/tags")
@@ -31,12 +33,12 @@ class OllamaClient:
                     data = response.json()
                     models = [model.get("name", "") for model in data.get("models", [])]
                     
-                    model_available = any(self.model in model for model in models)
+                    model_available = any(model_to_check in model for model in models)
                     
                     return {
                         "status": "healthy" if model_available else "model_not_found",
                         "url": self.base_url,
-                        "model": self.model,
+                        "model_checked": model_to_check,
                         "model_available": model_available,
                         "available_models": models
                     }
@@ -202,6 +204,156 @@ class OllamaClient:
                 "error": str(e)
             }
     
+    async def generate_corrected_code(
+        self,
+        original_sql: str,
+        issue_details: Dict[str, Any],
+        recommendations: List[str],
+        database_type: str,
+        schema_ddl: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate corrected SQL code based on issue recommendations using olmo-3:latest
+        
+        Args:
+            original_sql: The original problematic SQL query
+            issue_details: Details about the detected issue
+            recommendations: List of recommendations to fix the issue
+            database_type: Type of database (postgresql, mysql, etc.)
+            schema_ddl: Optional schema DDL for context
+        
+        Returns:
+            Dict containing corrected_sql, explanation, and changes_made
+        """
+        try:
+            # Use the code generation model (olmo-3:latest)
+            code_gen_model = settings.OLLAMA_CODE_GENERATION_MODEL
+            
+            logger.info(f"Using model: {code_gen_model} for corrected code generation")
+            
+            # Build the prompt for code generation
+            prompt = self._build_corrected_code_prompt(
+                original_sql, issue_details, recommendations, database_type, schema_ddl
+            )
+
+            async def _call_ollama(model_name: str) -> Dict[str, Any]:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(
+                        f"{self.base_url}/api/generate",
+                        json={
+                            "model": model_name,
+                            "prompt": prompt,
+                            "stream": False,
+                            "options": {
+                                "temperature": 0.1,  # Low temperature for precise code generation
+                                "top_p": 0.9,
+                                "top_k": 40,
+                                "num_predict": 2000,
+                                # Override any model-default stop tokens that may prematurely stop generation
+                                # (some models use '---' style stop sequences, which conflicts with our section markers)
+                                "stop": ["---END---"],
+                            }
+                        }
+                    )
+
+                if response.status_code != 200:
+                    return {
+                        "success": False,
+                        "status_code": response.status_code,
+                        "error": f"Ollama API returned status {response.status_code}"
+                    }
+
+                try:
+                    result = response.json()
+                except Exception:
+                    return {
+                        "success": False,
+                        "status_code": response.status_code,
+                        "error": "Ollama API returned non-JSON response"
+                    }
+
+                return {
+                    "success": True,
+                    "status_code": response.status_code,
+                    "raw": result,
+                    "llm_response": result.get("response", "")
+                }
+
+            def _parse_or_error(llm_text: str) -> Dict[str, Any]:
+                if not (llm_text or "").strip():
+                    return {
+                        "success": False,
+                        "error": "Empty response from LLM"
+                    }
+                parsed = self._parse_corrected_code_response(llm_text)
+                if not parsed.get("success", True):
+                    return {
+                        "success": False,
+                        "error": parsed.get("error", "Could not parse LLM response")
+                    }
+                return {
+                    "success": True,
+                    "parsed": parsed
+                }
+
+            model_candidates = [
+                code_gen_model,
+                self.request_model,
+                # Practical fallbacks (commonly available locally)
+                "codellama:latest",
+                "llama3:instruct",
+                "llama3:latest",
+            ]
+
+            tried: List[str] = []
+            last_error: str = ""
+            last_raw_response: str = ""
+
+            for model_name in [m for m in model_candidates if m and m not in tried]:
+                tried.append(model_name)
+                logger.info(f"Attempting corrected code generation with model: {model_name}")
+
+                call_result = await _call_ollama(model_name)
+                if not call_result.get("success"):
+                    last_error = call_result.get("error", "Ollama request failed")
+                    continue
+
+                llm_response = call_result.get("llm_response", "")
+                last_raw_response = llm_response
+
+                parsed_result = _parse_or_error(llm_response)
+                if parsed_result.get("success"):
+                    parsed = parsed_result["parsed"]
+                    return {
+                        "success": True,
+                        "corrected_sql": parsed["corrected_sql"],
+                        "explanation": parsed["explanation"],
+                        "changes_made": parsed["changes_made"],
+                        "raw_response": llm_response,
+                        "used_model": model_name,
+                        "tried_models": tried,
+                    }
+
+                last_error = parsed_result.get("error", "Could not parse LLM response")
+                logger.warning(
+                    f"Corrected-code response unusable from '{model_name}' ({last_error}); trying next model"
+                )
+
+            logger.error("Failed to generate corrected code from all candidate models")
+            return {
+                "success": False,
+                "error": last_error or "Failed to generate corrected code",
+                "raw_response": last_raw_response,
+                "tried_models": tried,
+            }
+        
+        except Exception as e:
+            logger.error(f"Corrected code generation failed: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
     async def generate_fix_recommendations(
         self,
         detected_issues: List[Dict[str, Any]],
@@ -223,39 +375,68 @@ class OllamaClient:
             prompt = self._build_fix_recommendations_prompt(
                 detected_issues, schema_ddl, database_type
             )
-            
+
+            # sqlcoder:latest frequently returns an empty response for this prompt.
+            # Try a few models in order and accept the first non-empty response.
+            models_to_try = []
+            if self.request_model:
+                models_to_try.append(self.request_model)
+            # Prefer the code-generation model (usually more instruction-following)
+            if settings.OLLAMA_CODE_GENERATION_MODEL and settings.OLLAMA_CODE_GENERATION_MODEL not in models_to_try:
+                models_to_try.append(settings.OLLAMA_CODE_GENERATION_MODEL)
+            # Common fallbacks (only used if installed)
+            for m in ["llama3:instruct", "llama3.1:latest"]:
+                if m not in models_to_try:
+                    models_to_try.append(m)
+
+            last_error = None
+            tried = []
+
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f"{self.base_url}/api/generate",
-                    json={
-                        "model": self.request_model,
-                        "prompt": prompt,
-                        "stream": False,
-                        "options": {
-                            "temperature": 0.2,
-                            "num_predict": 2000
-                        }
-                    }
-                )
-                
-                if response.status_code == 200:
+                for model_name in models_to_try:
+                    tried.append(model_name)
+                    response = await client.post(
+                        f"{self.base_url}/api/generate",
+                        json={
+                            "model": model_name,
+                            "prompt": prompt,
+                            "stream": False,
+                            "options": {
+                                "temperature": 0.2,
+                                "num_predict": 2000,
+                            },
+                        },
+                    )
+
+                    if response.status_code != 200:
+                        last_error = f"API returned status {response.status_code}"
+                        continue
+
                     result = response.json()
-                    recommendations = result.get("response", "")
-                    
+                    recommendations = result.get("response", "") or ""
+
+                    # If the model returned nothing at all, try the next model.
+                    if not recommendations.strip():
+                        continue
+
                     parsed = self._parse_fix_recommendations(recommendations)
-                    
+
                     return {
                         "success": True,
                         "index_recommendations": parsed["indexes"],
                         "query_rewrites": parsed["rewrites"],
                         "configuration_changes": parsed["config"],
-                        "maintenance_tasks": parsed["maintenance"]
+                        "maintenance_tasks": parsed["maintenance"],
+                        "raw_response": recommendations,
+                        "model": model_name,
+                        "tried_models": tried,
                     }
-                else:
-                    return {
-                        "success": False,
-                        "error": f"API returned status {response.status_code}"
-                    }
+
+            return {
+                "success": False,
+                "error": last_error or "Ollama returned an empty response",
+                "tried_models": tried,
+            }
         
         except Exception as e:
             logger.error(f"Fix recommendation generation failed: {e}")
@@ -994,6 +1175,51 @@ Provide your recommendations:"""
                         }
                         fix.update(extract_savings(rec))
                         result["indexes"].append(fix)
+                elif "DROP INDEX" in rec.upper():
+                    sql_match = re.search(r'DROP\s+INDEX.*?;', rec, re.IGNORECASE | re.DOTALL)
+                    if sql_match:
+                        sql = sql_match.group(0).strip()
+                        desc_match = re.search(r'(?:^|\n)(?:-|\d+\.)\s*(.*?)(?:\n|```|$)', rec, re.DOTALL)
+                        desc = desc_match.group(1).strip() if desc_match else "Drop unused index"
+
+                        fix = {
+                            "fix_type": "index_drop",
+                            "sql": sql,
+                            "description": desc,
+                            "estimated_impact": "high" if "high" in rec.lower() else "medium",
+                            "affected_objects": [],
+                            "safety_level": "caution",
+                        }
+                        fix.update(extract_savings(rec))
+                        result["indexes"].append(fix)
+
+        # Fallback: some models ignore the section markers.
+        # If we didn't capture any indexes above, scan the whole response for CREATE/DROP INDEX.
+        if not result["indexes"]:
+            index_statements = re.findall(
+                r"(?:CREATE\s+(?:UNIQUE\s+)?INDEX(?:\s+CONCURRENTLY)?|DROP\s+INDEX(?:\s+CONCURRENTLY)?(?:\s+IF\s+EXISTS)?)\s+[\s\S]*?(?:;|$)",
+                response,
+                flags=re.IGNORECASE,
+            )
+            for stmt in index_statements:
+                sql = stmt.strip()
+                if not sql:
+                    continue
+                if not sql.endswith(";"):
+                    sql = sql + ";"
+
+                fix_type = "index_creation" if sql.upper().startswith("CREATE") else "index_drop"
+                safety = "safe" if fix_type == "index_creation" else "caution"
+                result["indexes"].append(
+                    {
+                        "fix_type": fix_type,
+                        "sql": sql,
+                        "description": "Index recommendation",
+                        "estimated_impact": "medium",
+                        "affected_objects": [],
+                        "safety_level": safety,
+                    }
+                )
         
         # Extract rewrites
         if "--- REWRITES ---" in response:
@@ -1065,6 +1291,204 @@ Provide your recommendations:"""
                         result["maintenance"].append(fix)
         
         return result
+    
+    def _build_corrected_code_prompt(
+        self,
+        original_sql: str,
+        issue_details: Dict[str, Any],
+        recommendations: List[str],
+        database_type: str,
+        schema_ddl: Optional[str] = None
+    ) -> str:
+        """Build prompt for generating corrected code using olmo-3:latest"""
+        
+        schema_section = ""
+        if schema_ddl:
+            schema_section = f"""
+### DATABASE SCHEMA:
+```sql
+{schema_ddl}
+```
+"""
+        
+        recommendations_text = "\n".join([f"{i+1}. {rec}" for i, rec in enumerate(recommendations)])
+        
+        prompt = f"""You are an expert SQL developer specializing in {database_type.upper()} database optimization.
+
+### YOUR TASK:
+Generate corrected SQL code that addresses the detected performance issue and implements the provided recommendations.
+
+### DETECTED ISSUE:
+**Type:** {issue_details.get('issue_type', 'Unknown')}
+**Severity:** {issue_details.get('severity', 'Unknown')}
+**Title:** {issue_details.get('title', 'Performance Issue')}
+**Description:** {issue_details.get('description', 'No description provided')}
+
+### ORIGINAL SQL QUERY:
+```sql
+{original_sql}
+```
+{schema_section}
+### RECOMMENDATIONS TO IMPLEMENT:
+{recommendations_text}
+
+### REQUIREMENTS:
+1. **Implement ALL recommendations** listed above
+2. **Preserve query semantics** - results must match the original query
+3. **Provide executable SQL** - no placeholders, comments only for clarity
+4. **Optimize for performance** - apply best practices for {database_type}
+5. **Add brief inline comments** explaining key changes
+
+### OUTPUT FORMAT:
+Provide your response in this EXACT format (IMPORTANT: do NOT use markdown fences like ``` and do NOT start lines with '---'):
+
+CORRECTED_SQL:
+[Your complete, executable corrected SQL query here with inline comments]
+
+EXPLANATION:
+[Brief explanation of the changes and why they help]
+
+CHANGES_MADE:
+- [Change 1]
+- [Change 2]
+
+IMPLEMENTATION_NOTES:
+- [Any important notes / testing tips]
+
+END
+
+Now provide your corrected code:"""
+        
+        return prompt
+    
+    def _parse_corrected_code_response(self, response: str) -> Dict[str, Any]:
+        """Parse corrected code response from olmo-3:latest"""
+        import re
+        
+        corrected_sql = ""
+        explanation = ""
+        changes_made = []
+        parsing_method = "unknown"
+        
+        logger.debug(f"Parsing corrected code response (length: {len(response)} chars)")
+
+        # Strategy 0: Parse explicit plain-text markers (preferred)
+        if "CORRECTED_SQL:" in response:
+            parsing_method = "plain_markers"
+            try:
+                sql_match = re.search(
+                    r"CORRECTED_SQL:\s*(.*?)(?:\n\s*EXPLANATION:|\n\s*CHANGES_MADE:|\n\s*IMPLEMENTATION_NOTES:|\n\s*END\s*$)",
+                    response,
+                    re.DOTALL | re.IGNORECASE,
+                )
+                if sql_match:
+                    corrected_sql = sql_match.group(1).strip()
+
+                exp_match = re.search(
+                    r"EXPLANATION:\s*(.*?)(?:\n\s*CHANGES_MADE:|\n\s*IMPLEMENTATION_NOTES:|\n\s*END\s*$)",
+                    response,
+                    re.DOTALL | re.IGNORECASE,
+                )
+                if exp_match:
+                    explanation = exp_match.group(1).strip()
+
+                changes_match = re.search(
+                    r"CHANGES_MADE:\s*(.*?)(?:\n\s*IMPLEMENTATION_NOTES:|\n\s*END\s*$)",
+                    response,
+                    re.DOTALL | re.IGNORECASE,
+                )
+                if changes_match:
+                    changes_block = changes_match.group(1).strip()
+                    for line in changes_block.splitlines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        line = re.sub(r"^[-*\d\.\)]+\s*", "", line)
+                        if line:
+                            changes_made.append(line)
+            except Exception:
+                # Fall through to other strategies
+                parsing_method = "plain_markers_failed"
+        
+        # Strategy 1: Extract from section markers
+        if "--- CORRECTED SQL ---" in response:
+            parts = response.split("--- CORRECTED SQL ---")
+            if len(parts) > 1:
+                remaining = parts[1]
+                
+                # Find the end of SQL section
+                if "--- EXPLANATION ---" in remaining:
+                    sql_parts = remaining.split("--- EXPLANATION ---")
+                    corrected_sql = sql_parts[0].strip()
+                    
+                    # Extract explanation
+                    exp_remaining = sql_parts[1]
+                    if "--- IMPLEMENTATION NOTES ---" in exp_remaining:
+                        explanation = exp_remaining.split("--- IMPLEMENTATION NOTES ---")[0].strip()
+                    else:
+                        explanation = exp_remaining.split("---END---")[0].strip()
+                    
+                    parsing_method = "section_markers"
+        
+        # Strategy 2: Extract from code blocks if section markers failed
+        if not corrected_sql:
+            logger.debug("Section markers not found, trying code blocks")
+            corrected_sql = self._extract_sql_from_code_blocks(response)
+            if corrected_sql:
+                parsing_method = "code_blocks"
+                # Try to extract explanation from remaining text
+                if "**Changes Made:**" in response:
+                    exp_match = re.search(r'\*\*Changes Made:\*\*(.*?)(?:---|$)', response, re.DOTALL | re.IGNORECASE)
+                    if exp_match:
+                        explanation = exp_match.group(1).strip()
+        
+        # Strategy 3: Heuristic extraction
+        if not corrected_sql:
+            logger.debug("Code blocks not found, trying heuristic extraction")
+            corrected_sql = self._extract_sql_heuristic(response)
+            if corrected_sql:
+                parsing_method = "heuristic"
+        
+        # Clean the SQL
+        corrected_sql = self._clean_sql(corrected_sql)
+        
+        # Validate
+        is_valid = self._validate_sql_basic(corrected_sql)
+        
+        if not is_valid:
+            logger.error(f"Failed to parse valid corrected SQL from response")
+            return {
+                "corrected_sql": "",
+                "explanation": "",
+                "changes_made": [],
+                "success": False,
+                "error": "Could not parse valid corrected SQL from LLM response",
+                "raw_response": response
+            }
+        
+        # Extract changes made from explanation
+        if explanation:
+            # Look for numbered or bulleted list of changes
+            change_patterns = [
+                r'\d+\.\s*([^\n]+)',  # Numbered list
+                r'[-•]\s*([^\n]+)',   # Bulleted list
+            ]
+            
+            for pattern in change_patterns:
+                matches = re.findall(pattern, explanation)
+                if matches:
+                    changes_made = [match.strip() for match in matches if match.strip()]
+                    break
+        
+        logger.info(f"Corrected code parsing complete - Method: {parsing_method}, Valid: {is_valid}")
+        
+        return {
+            "corrected_sql": corrected_sql,
+            "explanation": explanation or "No explanation provided",
+            "changes_made": changes_made,
+            "success": True,
+            "raw_response": response
+        }
     
     def _extract_summary(self, explanation: str) -> str:
         """Extract a brief summary from explanation"""
